@@ -1,0 +1,117 @@
+#Idoia Martinez de Lapiscina
+
+#Task_Epigenomics
+
+#4.EN-Tx ATAC-seq data: downstream analyses 
+
+#To start and run the docker container 
+
+sudo docker run -v $PWD:$PWD -w $PWD --rm -it dgarrimar/epigenomics_course 
+
+#To access the epigenomics_uvic folder, create and move to the ATAC-seq folder. I create other files to contain further analyses within ATAC-seq. 
+
+cd epigenomics_uvic 
+mkdir ATAC-seq
+cd ATAC-seq
+
+mkdir analyses
+mkdir data
+
+#To download peak calling in folders 
+
+mkdir data/bigBed.files 
+mkdir data/bigWig.files
+
+#To download ATAC-Seq metadata in a created metadata file 
+
+../bin/download.metadata.sh "https://www.encodeproject.org/metadata/?replicates.library.biosample.donor.uuid=d370683e-81e7-473f-8475-7716d027849b&status=released&status=submitted&status=in+progress&assay_slims=DNA+accessibility&biosample_ontology.term_name=sigmoid+colon&biosample_ontology.term_name=stomach&assay_title=ATAC-seq&type=Experiment&files.analyses.status=released&files.preferred_default=true"
+
+head -1 metadata.tsv | awk 'BEGIN{FS=OFS="\t"}{for (i=1;i<=NF;i++){print $i, i}}'
+
+#To retrieve ATAC-Seq peaks and fold-change signals
+
+grep -F "bigBed_narrowPeak" metadata.tsv|\
+grep -F "pseudoreplicated_peaks" |\
+grep -F "GRCh38" |\
+awk 'BEGIN{FS=OFS="\t"}{print $1, $11, $23}' |\
+sort -k2,2 -k1,1r |\
+sort -k2,2 -u > analyses/bigBed.peaks.ids.txt
+
+#To download the files from the link using the IDs saved in the previous file
+
+cut -f1 analyses/bigBed.peaks.ids.txt |\
+while read filename; do
+       wget -P data/bigBed.files "https://www.encodeproject.org/files/$filename/@@download/$filename.bigBed"
+done
+
+#To retrieve the original MD5 hash from the metadata and compute MD5 hash on the downloaded files
+
+  ../bin/selectRows.sh <(cut -f1 analyses/"$file_type".*.ids.txt) metadata.tsv | cut -f1,46 > data/"$file_type".files/md5sum.txt
+
+  cat data/"$file_type".files/md5sum.txt |\
+  while read filename original_md5sum; do 
+    md5sum data/"$file_type".files/"$filename"."$file_type" |\
+    awk -v filename="$filename" -v original_md5sum="$original_md5sum" 'BEGIN{FS=" "; OFS="\t"}{print filename, original_md5sum, $1}' 
+  done > tmp 
+  mv tmp data/md5sum.txt
+
+#To make sure there are no files that differ from original and computed MD5 hashes
+
+  awk '$2!=$3' data/"$file_type".files/md5sum.txt
+
+done
+
+#Using BEDtools, to run an intersection analysis in a new directory
+
+mkdir annotation
+wget -P annotation https://public-docs.crg.es/rguigo/Data/bborsari/UVIC/epigenomics_course/gencode.v24.protein.coding.non.redundant.TSS.bed
+
+####1. To compute the peak number that intersect in the promoters. Through BEDtools intersect I transform .bigBed files to .bed files 
+
+mkdir data/bed.files
+mkdir analyses/peaks.analyses
+cut -f1 analyses/bigBed.peaks.ids.txt |\
+while read filename; do
+      bigBedToBed data/bigBed.files/"$filename".bigBed data/bed.files/"$filename".bed
+done
+
+#To compute the number of peaks intersecting the promoter regions
+
+cut -f-2 analyses/bigBed.peaks.ids.txt |\
+while read filename tissue; do 
+      bedtools intersect -wa -a data/bed.files/"$filename".bed -b annota-tion/gencode.v24.protein.coding.non.redundant.TSS.bed |\
+        sort -u > analyses/peaks.promoters."$tissue".ATAC.bed
+done
+
+#To check the files that have been created
+cd analyses
+wc -l *.bed
+
+#47871 peaks in the sigmoid colon file and 44749 in the stomach file. In total, 92620 peaks.
+
+####2.Compute peaks from the outside of the gene coordinates 
+
+#To obtain the appropiate annotation file and unzip
+
+wget -P annotation https://www.encodeproject.org/files/gencode.v24.primary_assembly.annotation/@@download/gencode.v24.primary_assembly.annotation.gtf.gz
+gunzip annotation/gencode.v24.primary_assembly.annotation.gtf.gz
+
+#To convert annotation file to .bed file 
+
+awk '$3=="gene"' annotation/gencode.v24.primary_assembly.annotation.gtf |\
+grep -F "protein_coding" |\
+cut -d ";" -f1 |\
+awk 'BEGIN{OFS="\t"}{print $1, $4, $5, $10, 0, $7, $10}' |\
+sed 's/\"//g' |\
+awk 'BEGIN{FS=OFS="\t"}$1!="chrM"{$2=($2-1); print $0}' > annotation/gencode.v24.protein.coding.gene.body.bed 
+
+#To perform intersection of the annotation
+cut -f-2 analyses/bigBed.peaks.ids.txt |while read filename tissue; do bedtools intersect -b annota-tion/gencode.v24.protein.coding.gene.body.bed -a data/bed.files/"$filename".bed -v > anal-yses/outerpeaks."$tissue".bed; done
+
+cd analyses
+wc -l outer*.bed
+
+#37035 and 34357 peaks in the outer gene coordinates in the sigmoid colon and stomach, respectively. In total, 71572 peaks are detected.
+
+
+
