@@ -2,7 +2,8 @@
 
 #Task_Epigenomics
 
-#4.EN-Tx ATAC-seq data: downstream analyses 
+########
+##4.EN-Tx ATAC-seq data: downstream analyses 
 
 #To start and run the docker container 
 
@@ -113,5 +114,113 @@ wc -l outer*.bed
 
 #37035 and 34357 peaks in the outer gene coordinates in the sigmoid colon and stomach, respectively. In total, 71572 peaks are detected.
 
+########
+##5.Distal regulatory activity
 
+#To create a new folders within the epigenomics_uvic folder  
 
+mkdir regulatory_elements
+cd regulatory_elements
+mkdir H3K27acpeaks 
+mkdir H3K4me1peaks
+
+#To get the H3K27ac and H3K4me1 file names for the two tissues using metadata in the previously used Chip-seq folder, and later to get the bigBed files 
+
+grep -F H3K27ac ../ChIP-seq/metadata.tsv | grep -F "bigBed_narrowPeak" | grep -F "pseudoreplicated_peaks" |grep -F "GRCh38" |awk 'BEGIN{FS=OFS="\t"}{print $1, $11, $23}' |sort -k2,2 -k1,1r |sort -k2,2 -u > H3K27acpeaks/bigBed.peaksH3K27ac.ids.txt
+grep -F H3K4me1 ../ChIP-seq/metadata.tsv | grep -F "bigBed_narrowPeak" | grep -F "pseudoreplicated_peaks" | grep -F "GRCh38" | awk 'BEGIN{FS=OFS="\t"}{print $1, $11, $23}' | sort -k2,2 -k1,1r |sort -k2,2 -u > H3K4me1peaks/bigBed.peaksH3K4me1.ids.txt
+
+cut -f1 H3K27acpeaks/bigBed.peaksH3K27ac.ids.txt |\
+while read filename; do wget -P H3K27acpeaks "https://www.encodeproject.org/files/$filename/@@download/$filename.bigBed"
+done
+
+cut -f1 H3K4me1peaks/bigBed.peaksH3K4me1.ids.txt |\
+while read filename; do 
+wget -P H3K4me1peaks "https://www.encodeproject.org/files/$filename/@@download/$filename.bigBed"
+done
+
+#To convert these files to bed files, using bigBedtoBed function
+
+cut -f1 H3K27acpeaks/bigBed.peaksH3K27ac.ids.txt |\
+while read filename; do bigBedToBed H3K27acpeaks/"$filename".bigBed H3K27acpeaks/"$filename".bed
+done
+
+cut -f1 H3K4me1peaks/bigBed.peaksH3K4me1.ids.txt |\
+while read filename; do bigBedToBed H3K4me1peaks/"$filename".bigBed H3K4me1peaks/"$filename".bed
+done
+
+#To intersect H3K4me1 peaks with those peaks that are outside the gene coordinates 
+
+bedtools intersect -a ../ATAC-Seq/peaksoutside_sigmoidcolon.bed -b H3K4me1peaks/ENCFF724ZOF.bed -u > H3K4me1peaks/common_outside_sigmoidcolon.bed
+ 
+bedtools intersect -a ../ATAC-seq/peaksoutside_stomach.bed -b H3K4me1peaks/ENCFF844XRN.bed -u > H3K4me1peaks/common_outside_stomach.bed
+ 
+#The same code is aplied to intersect H3K27ac peaks.
+
+bedtools intersect -a H3K4me1peaks/common_outside_sigmoidcolon.bed -b H3K27acpeaks/ENCFF872UHN.bed -u > common_sigmoid_colon.bed
+ 
+bedtools intersect -a H3K4me1peaks/common_outside_stomach.bed -b H3K27acpeaks/ENCFF977LBD.bed -u > common_stomach.bed
+
+#To count the peaks for each tissue 
+wc -l *.bed
+
+#14215 peaks in the sigmoid and 8022 in the stomach_colon.bed. In total, 22237 peaks are detected. 
+
+####1. Regulatory elements located on chromosome 1
+
+#To select peaks in chromosome 1 from both tissues and get the peak counts
+
+cut -f2 ../ATAC-seq/analyses/bigBed.peaks.ids.txt |\
+while read tissue; do grep -w chr1 common$tissue.bed | awk 'BEGIN{FS=OFS="\t"}$1=="chr1"{print $4, $2}' > $tissue.regulatory.elements.starts.tsv
+done
+ 
+wc -l sigmoid_colon.regulatory.elements.starts.tsv stomach.regulatory.elements.starts.tsv
+
+#1521 and 987 peaks in the sigmoid_colon and the stomach, respectively. Overall, 2508 peaks. 
+
+####2. Protein coding genes on chromosome 1
+
+#To generate the gene starts tsv
+
+grep -w chr1 ../ATAC-seq/annotation/gencode.v24.protein.coding.gene.body.bed |
+awk 'BEGIN{FS=OFS="\t"}{if ($6=="+"){start=$2} else {start=$3}; print $4, start}' > gene.starts.tsv
+
+#To copy the python script inside the epigenomics_uvic folder
+
+cd bin
+nano get.distance.py
+nano ../bin/get.distance.py
+
+####3. To retrieve the closest gene and the distance to the closest gene in the regulatory files
+
+cut -f2 ../ATAC-seq/analyses/bigBed.peaks.ids.txt |\
+while read tissue; do cat $tissue.regulatory.elements.starts.tsv| while read element start; do python ../bin/get.distance.py --input gene.starts.tsv --start $start done > $tis-sue.regulatory.elements.genes.distances.tsv
+done
+
+####4. To compute the mean and median of distances in the regulatory element files using R 
+
+#I used the following code to obtain mean and median for the sigmoid colon first and later for stomach
+
+Sigmoid_csv <- read.csv("sigmoid_colon.regulatory.elements.genes.distances.tsv", header=F, sep="")
+distances_sigmoid_colon <- as.vector(unlist(Sigmoid_csv[3]))
+mean_sigmoidcolon <- mean(distances_sigmoid_colon, na.rm=TRUE)
+mean_sigmoidcolon
+
+#Mean for sigmoid colon is:73026.44
+
+median_sigmoidcolon <- median(distances_sigmoid_colon, na.rm=TRUE)
+median_sigmoidcolon
+
+#Median for sigmoid colon is:35768
+
+Stomach_csv <- read.csv("stomach.regulatory.elements.genes.distances.tsv", header=F, sep="")
+distances_stomach <- as.vector(unlist(Stomach_csv[3]))
+
+mean_stomach <- mean(distances_stomach, na.rm=TRUE)
+mean_stomach
+	
+#Mean for stomach is: 45227.05
+
+median_stomach <- median(distances_stomach, na.rm=TRUE)
+median_stomach
+
+#Median for stomach is: 27735
