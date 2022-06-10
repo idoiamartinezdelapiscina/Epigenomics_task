@@ -47,18 +47,18 @@ done
 
 #To retrieve the original MD5 hash from the metadata and compute MD5 hash on the downloaded files
 
-  ../bin/selectRows.sh <(cut -f1 analyses/"$file_type".*.ids.txt) metadata.tsv | cut -f1,46 > data/"$file_type".files/md5sum.txt
+../bin/selectRows.sh <(cut -f1 analyses/"$file_type".*.ids.txt) metadata.tsv | cut -f1,46 > data/"$file_type".files/md5sum.txt
 
-  cat data/"$file_type".files/md5sum.txt |\
-  while read filename original_md5sum; do 
+cat data/"$file_type".files/md5sum.txt |\
+while read filename original_md5sum; do 
     md5sum data/"$file_type".files/"$filename"."$file_type" |\
     awk -v filename="$filename" -v original_md5sum="$original_md5sum" 'BEGIN{FS=" "; OFS="\t"}{print filename, original_md5sum, $1}' 
-  done > tmp 
-  mv tmp data/md5sum.txt
+done > tmp 
+mv tmp data/md5sum.txt
 
 #To make sure there are no files that differ from original and computed MD5 hashes
 
-  awk '$2!=$3' data/"$file_type".files/md5sum.txt
+awk '$2!=$3' data/"$file_type".files/md5sum.txt
 
 done
 
